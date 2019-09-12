@@ -1,4 +1,5 @@
 const fs = require('fs');
+const path = require('path');
 const readline = require('readline');
 const { google } = require('googleapis');
 
@@ -62,6 +63,8 @@ var queryBuilder = (function() {
 var gmailApi = (function() {
     'use strict';
 
+    let credentialsFolderPath = path.join(__dirname, 'credentials');
+
     // If modifying these scopes, delete token.json.
     const SCOPES = ['https://www.googleapis.com/auth/gmail.readonly'];
     // The file token.json stores the user's access and refresh tokens, and is
@@ -69,12 +72,13 @@ var gmailApi = (function() {
     // time.
 
     // Go to https://developers.google.com/gmail/api/quickstart/nodejs to create and store credentials.json for your account
-    const TOKEN_PATH = 'credentials/token.json';
+    const TOKEN_PATH = path.join(credentialsFolderPath, 'token.json');
+    const CREDENTIALS_PATH = path.join(credentialsFolderPath, 'credentials.json');
 
     function getCredentials() {
         try {
             // Load client secrets from a local file.
-            const content = fs.readFileSync('credentials/credentials.json');
+            const content = fs.readFileSync(CREDENTIALS_PATH);
             const credentials = JSON.parse(content);
 
             return credentials;
@@ -188,8 +192,32 @@ var gmailApi = (function() {
         });
     }
 
+    async function messageExistsWithTimeout(query, timeout) {
+        return new Promise(async (resolve, reject) => {
+            let timeSpent = 0;
+            const timeLimit = timeout || 5 * 60 * 1000;
+
+            while (!(await messageExists(query))) {
+                if (timeSpent > timeLimit) {
+                    reject('Time spent on the test is over the time limit of: ' + timeLimit + 'miliseconds.');
+                    return;
+                }
+
+                const sleep = 10 * 1000;
+                console.log('Wait for ' + sleep + ' milliseconds ...');
+
+                await new Promise(resolve => setTimeout(resolve, sleep));
+
+                timeSpent = timeSpent + sleep;
+            }
+
+            resolve(true);
+        });
+    }
+
     return {
-        messageExists: messageExists
+        messageExists: messageExists,
+        messageExistsWithTimeout: messageExistsWithTimeout
     };
 }());
 
