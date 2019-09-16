@@ -1,4 +1,5 @@
 const fs = require('fs');
+const path = require('path');
 const readline = require('readline');
 const { google } = require('googleapis');
 
@@ -62,19 +63,25 @@ var queryBuilder = (function() {
 var gmailApi = (function() {
     'use strict';
 
+    let credentialsFolderPath = path.join(__dirname, 'credentials');
+
     // If modifying these scopes, delete token.json.
-    const SCOPES = ['https://www.googleapis.com/auth/gmail.readonly'];
+    const SCOPES = [
+        'https://www.googleapis.com/auth/gmail.readonly',
+        'https://mail.google.com/'
+    ];
     // The file token.json stores the user's access and refresh tokens, and is
     // created automatically when the authorization flow completes for the first
     // time.
 
     // Go to https://developers.google.com/gmail/api/quickstart/nodejs to create and store credentials.json for your account
-    const TOKEN_PATH = 'credentials/token.json';
+    const TOKEN_PATH = path.join(credentialsFolderPath, 'token.json');
+    const CREDENTIALS_PATH = path.join(credentialsFolderPath, 'credentials.json');
 
     function getCredentials() {
         try {
             // Load client secrets from a local file.
-            const content = fs.readFileSync('credentials/credentials.json');
+            const content = fs.readFileSync(CREDENTIALS_PATH);
             const credentials = JSON.parse(content);
 
             return credentials;
@@ -138,7 +145,7 @@ var gmailApi = (function() {
         });
     }
 
-    async function messageExists(query) {
+    async function getMessageFromInbox(query) {
         return new Promise(async (resolve, reject) => {
             const credentials = getCredentials();
             const auth = await getOAuth2Client(credentials);
@@ -156,7 +163,7 @@ var gmailApi = (function() {
 
                 const messages = res.data.messages;
                 if (!messages) {
-                    reject('No messages found for query:\n' + query);
+                    reject('No messages found');
                     return;
                 }
 
@@ -180,7 +187,16 @@ var gmailApi = (function() {
                             return;
                         }
                         console.log(res.data.snippet);
-                        resolve(true);
+
+                        const bodyBuffer = Buffer.from(res.data.payload.body.data, 'base64');
+                        const bodyText = bodyBuffer.toString('utf-8');
+
+                        resolve({
+                            exists: true,
+                            messageId: message.id,
+                            body: bodyText
+                        });
+
                         return;
                     });
                 });
@@ -188,8 +204,71 @@ var gmailApi = (function() {
         });
     }
 
+    async function getMessage(query, timeout) {
+        return new Promise(async (resolve, reject) => {
+            let timeSpent = 0;
+            const timeLimit = timeout || 5 * 60 * 1000;
+
+            console.log('query:\n' + query);
+
+            let done = false;
+            let result;
+
+            while (!done) {
+                if (timeSpent > timeLimit) {
+                    reject('Time spent on the test is over the time limit of: ' + timeLimit + 'miliseconds.');
+                    return;
+                }
+
+                const sleep = 10 * 1000;
+                console.log('Wait for ' + sleep + ' milliseconds ...');
+
+                await new Promise(resolve => setTimeout(resolve, sleep));
+
+                timeSpent = timeSpent + sleep;
+
+                try {
+                    result = await getMessageFromInbox(query);
+                    done = result.exists;
+
+                } catch (error) {
+                    console.log(error);
+                }
+            }
+
+            resolve(result);
+        });
+    }
+
+    async function trashMessage(query) {
+        return new Promise(async (resolve, reject) => {
+            try {
+                const result = await getMessageFromInbox(query);
+
+                const credentials = getCredentials();
+                const auth = await getOAuth2Client(credentials);
+                const gmail = google.gmail({ version: 'v1', auth });
+
+                gmail.users.messages.trash({
+                    userId: 'me',
+                    id: result.messageId
+                }, (err, res) => {
+                    if (err) {
+                        reject('The API returned an error: ' + err);
+                        return;
+                    }
+
+                    resolve(true);
+                });
+            } catch (error) {
+                reject(error);
+            }
+        });
+    }
+
     return {
-        messageExists: messageExists
+        getMessage: getMessage,
+        trashMessage: trashMessage
     };
 }());
 
